@@ -9,6 +9,7 @@ var querystring = require("query-string");
 var cookieParser = require("cookie-parser");
 var crypto = require("crypto");
 var socketio = require("socket.io-client");
+var websiteState = require("./websiteState").state;
 
 //grab network config info from network-info.json
 var networkInfo = require("./network-info.json");
@@ -21,9 +22,10 @@ var app = express();
 app.use(express.static(__dirname + "/public"))
     .use(cors())
     .use(cookieParser());
+app.use(express.static(__dirname + '/styles'));
 
 //spotify api information
-var client_id = "35aff29158f344858037d41be2493582";
+var client_id = "a80ce077cafc435b993b38d5a9bb9762";
 var client_secret = require("./keys.json").spotify_client_secret;
 var redirect_uri = baseUrl + ":" + appPort.toString() + "/callback";
 
@@ -49,7 +51,7 @@ app.get("/visualizer", function(req, res) {
     res.redirect("visualizer.html");
 });
 
-//login page (redirects to spotify auth page)
+//login page (redirects to spotify auth page) All GOOD
 app.get("/login", function(req, res) {
     //initialize random state ID and store in cookie
     var state = crypto.randomBytes(16).toString("hex");
@@ -118,7 +120,26 @@ app.get("/callback", function(req, res) {
             },
             json: true
         };
-
+         //send http request to Spotify to get access token and refresh token
+         request.post(authOptions, function(error, response, body) {
+            if (!error && response.statusCode === 200) {
+                //grab access token and refresh token from API response
+                    websiteState.tokens.access_token = body.access_token
+                    websiteState.tokens.refresh_token = body.refresh_token;
+                    console.log("access_token: " + websiteState.tokens.access_token);
+                    res.redirect("/visualizer");
+            }
+            else {
+                res.redirect(
+                    "/#" +
+                        querystring.stringify({
+                            error: "invalid_token"
+                        })
+                );
+            }
+        });  
+/* 
+//Ignore for now. WILL USE ONCE WE GET THE BOARD
         //send http request to Spotify to get access token and refresh token
         request.post(authOptions, function(error, response, body) {
             if (!error && response.statusCode === 200) {
@@ -176,7 +197,43 @@ app.get("/callback", function(req, res) {
                 );
             }
         });
+*/
     }
+});
+
+
+//This is for the website refresh token
+app.get('/refresh_token', function(req, res) {
+
+    // requesting access token from refresh token
+    //var refresh_token = req.query.refresh_token;
+    var authOptions = {
+      url: 'https://accounts.spotify.com/api/token',
+      headers: { 'Authorization': 'Basic ' + (new Buffer(client_id + ':' + client_secret).toString('base64')) },
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: websiteState.tokens.refresh_token
+      },
+      json: true
+    };
+  
+    request.post(authOptions, function(error, response, body) {
+      if (!error && response.statusCode === 200) {
+        websiteState.tokens.accessToken = body.access_token;
+        //I dont think i will need this part but lets keeop it for now. the Send part
+        res.send({
+          'access_token': websiteState.tokens.accessToken 
+        });
+      }
+      else {
+        res.redirect(
+            "/#" +
+                querystring.stringify({
+                    error: "Refresh Token Error"
+                })
+        );
+    }
+    });
 });
 
 app.listen(appPort);
