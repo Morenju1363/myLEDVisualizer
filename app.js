@@ -127,6 +127,7 @@ app.get("/callback", function(req, res) {
                     websiteState.tokens.access_token = body.access_token
                     websiteState.tokens.refresh_token = body.refresh_token;
                     console.log("access_token: " + websiteState.tokens.access_token);
+                    refreshAccessToken(websiteState);
                     res.redirect("/visualizer");
             }
             else {
@@ -235,6 +236,504 @@ app.get('/refresh_token', function(req, res) {
     }
     });
 });
+
+
+
+
+/*
+
+Start of function testing 
+*/
+
+
+function connect(websiteState) {
+    stopPingLoop(websiteState);
+    initialize(websiteState, websiteState.tokens.accessToken)
+
+}
+/**
+ *  initializes the visualizer by setting access token and starting ping loop
+ */
+function initialize(websiteState, access_token) {
+    // update state with access token
+    websiteState.tokens.accessToken = access_token;
+    websiteState.api.headers = { Authorization: "Bearer " + access_token };
+    // start the ping loop
+    ping(websiteState);
+}
+
+
+
+
+
+
+/**
+ * request new access token from express server if required
+ Need to work on this
+ */
+function refreshAccessToken(websiteState) {
+    console.log("Refreshing access token...");
+
+    console.log("token refresh requested");
+    var authOptions = {
+        url: "https://accounts.spotify.com/api/token",
+        headers: {
+            Authorization: "Basic " + Buffer.from(client_id + ":" + client_secret ).toString("base64")
+        },
+        form: {
+            grant_type: "refresh_token",
+            refresh_token: websiteState.tokens.refresh_token
+        },
+        json: true
+    };
+    request.post(authOptions, function(error, response, body) {
+        if (!error && response.statusCode === 200) {
+            var new_access_token = body.access_token;
+            //pass new access token to back-end server
+            websiteState.tokens.accessToken = new_access_token;
+            connect(websiteState);
+           // socket.emit("accessToken", new_access_token); // We need to do shit here fuck!!!!!!!
+            console.log("new access token passed to back-end");
+            console.log("access_token: " + new_access_token);
+        }
+    });
+}
+
+/**
+ * ping the spotify API for the currently playing song after a delay specified in state 
+ * DONE
+ */
+function ping(websiteState) {
+    websiteState.pingLoop = setTimeout(() => fetchCurrentlyPlaying(websiteState),
+    websiteState.api.pingDelay);
+}
+
+/**
+ * stops the ping loop, effectively stopping the visualizer until a new access token is passed
+ * DONE
+ */
+function stopPingLoop(websiteState) {
+    if (websiteState.pingLoop !== undefined) {
+        clearTimeout(websiteState.pingLoop);
+        stopVisualizer(websiteState);
+        console.log("\n\t==========\n\tTERMINATED\n\t==========\n");
+    }
+}
+
+/**
+ * gets the currently playing song + track progress from spotify API
+ * DONE 
+ */
+function fetchCurrentlyPlaying(websiteState) {
+    // grab the current time
+    var timestamp = Date.now();
+
+    // request the currently playing song from spotify API
+    request.get(
+        {
+            url: websiteState.api.currentlyPlaying,
+            headers: websiteState.api.headers,
+            json: true
+        },
+        (error, response, body) => {
+            // access token is expired, we must request a new one
+            if (response.statusCode === 401) {                    
+                refreshAccessToken(websiteState);
+                return;
+            }
+            // no device is playing music
+            else if (response.statusCode === 204) {
+                console.log("\nNo playback detected");
+                if (websiteState.visualizer.active) {
+                    stopVisualizer(websiteState);
+                }
+                // keep listening in case playback resumes
+                ping(websiteState);
+            }
+            // no error, proceed
+            else {
+                // process the response
+                processResponse(websiteState, {
+                    track: body.item,
+                    playing: body.is_playing,
+                    // account for time to call api in progress
+                    progress: body.progress_ms + (Date.now() - timestamp)
+                });
+            }
+        }
+    );
+}
+
+/**
+ * gets the song analysis (beat intervals, etc) for the current song from the spotify API
+ * DONE
+ */
+function fetchTrackData(websiteState, { track, progress }) {
+    // fetch the current time
+    var timestamp = Date.now();
+
+    // request song analysis from spotify
+    request.get(
+        {
+            url: websiteState.api.trackAnalysis + track.id,
+            headers: websiteState.api.headers,
+            json: true
+        },
+        (error, response, body) => {
+            // access token is expired, we must request a new one
+            if (response.statusCode === 401) {
+                refreshAccessToken(websiteState);
+                return;
+            }
+            // no error, proceed
+            else {
+                var analysis = body;
+                // if the track has no analysis data, don't visualize it
+                if (
+                    analysis === undefined ||
+                    analysis["beats"] === undefined ||
+                    analysis["beats"].length == 0
+                ) {
+                    websiteState.visualizer.hasAnalysis = false;
+                } else {
+                    websiteState.visualizer.hasAnalysis = true;
+                    // adjust beat data for ease of use
+                    normalizeIntervals(websiteState, { track, analysis });
+                }
+                // account for time to call api in initial timestamp
+                var initialTimestamp = Date.now() - (Date.now() - timestamp);
+                syncTrackProgress(websiteState, progress, initialTimestamp);
+                // set the new currently playing song
+                setCurrentlyPlaying(websiteState, {
+                    track,
+                    analysis
+                });
+            }
+        }
+    );
+}
+
+/**
+ * figure out what to do, according to state and track data 
+ * DONE
+ */
+function processResponse(websiteState, { track, playing, progress }) {
+    // check that the song we have is the currently playing song
+    var songsInSync =
+        JSON.stringify(websiteState.visualizer.currentlyPlaying) ===
+        JSON.stringify(track);
+
+    // approximate progress vs api progress, and error between
+    var progressStats = {
+        client: websiteState.visualizer.trackProgress,
+        server: progress,
+        error: websiteState.visualizer.trackProgress - progress
+    };
+
+    // log the error between our approximate progress and the server progress
+    console.log(`\nclient progress: ${progressStats.client}ms`);
+    console.log(`server progress: ${progressStats.server}ms`);
+    console.log(`Sync error: ${Math.round(progressStats.error)}ms\n`);
+
+    // if nothing is playing, ping state
+    if (track === null || track === undefined) {
+        return ping(websiteState);
+    }
+
+    // if something is playing, but visualizer isn't on
+    if (playing && !websiteState.visualizer.active) {
+        // start the visualizer if the songs are synced
+        if (songsInSync) {
+            return startVisualizer(websiteState);
+        }
+        // otherwise, get the data for the new track
+        return fetchTrackData(websiteState, { track, progress });
+    }
+
+    // if nothing is playing but the visualizer is active
+    if (!playing && websiteState.visualizer.active) {
+        stopVisualizer(websiteState);
+    }
+
+    // if the wrong song is playing
+    if (playing && websiteState.visualizer.active && !songsInSync) {
+        // get the data for the new track
+        stopVisualizer(websiteState);
+        return fetchTrackData(websiteState, { track, progress });
+    }
+
+    // if the approximate track progress and the api track progress fall out of sync by more than 250ms
+    // resync the progress and the beat loop
+    if (
+        playing &&
+        websiteState.visualizer.active &&
+        songsInSync &&
+        Math.abs(progressStats.error) > websiteState.visualizer.syncOffsetThreshold
+    ) {
+        var initialTimestamp = Date.now();
+        stopBeatLoop(websiteState);
+        syncTrackProgress(websiteState, progress, initialTimestamp);
+        syncBeats(websiteState);
+    }
+
+    // keep the ping loop going
+    ping(websiteState);
+}
+
+/**
+ * Sets the currently playing song and track analysis in state
+ * DONE
+ */
+function setCurrentlyPlaying(websiteState, { track, analysis }) {
+    websiteState.visualizer.currentlyPlaying = track;
+    websiteState.visualizer.trackAnalysis = analysis;
+
+    startVisualizer(websiteState);
+
+    console.log(
+        `Now playing: ${
+            websiteState.visualizer.currentlyPlaying.album.artists[0].name
+        } – ${websiteState.visualizer.currentlyPlaying.name}`
+    );
+}
+
+/**
+ * sets visualizer to active, syncs beats, and begins ping loop
+ * DONE
+ */
+function startVisualizer(websiteState) {
+    console.log("\nVisualizer started");
+    websiteState.visualizer.active = true;
+    syncBeats(websiteState);
+    ping(websiteState);
+}
+
+/**
+ * sets visualizer to inactive, terminates beat loop, and turns off led strip
+ * THIS WILL NEED TO WORK ON
+ */
+function stopVisualizer(websiteState) {
+    console.log("\nVisualizer stopped");
+    websiteState.visualizer.active = false;
+    // stop the track progress loop if it's running
+    stopTrackProgressLoop(websiteState);
+    // stop the beat loop if it's running
+    stopBeatLoop(websiteState);
+    // black out the led strip DONT NEED THIS
+    /*
+    for (var i = 0; i < NUM_LEDS; i++) {
+        pixelData[i] = 0;
+    }
+    ws281x.render(pixelData);
+    */
+}
+
+/**
+ * resets any track progress approximation loop currently running and begins a new loop
+ * DONE
+ */
+function syncTrackProgress(websiteState, initialProgress, initialTimestamp) {
+    websiteState.visualizer.initialTimestamp = initialTimestamp;
+    // stop the track progress update loop
+    stopTrackProgressLoop(websiteState);
+    // set the new approximate track progress
+    setTrackProgress(websiteState, initialProgress);
+    // begin the track progress update loop
+    startTrackProgressLoop(websiteState);
+}
+
+/**
+ * sets the approximation of track progress
+ * DONE
+ */
+function setTrackProgress(websiteState, initialProgress) {
+    websiteState.visualizer.initialTrackProgress = initialProgress;
+}
+
+/**
+ * A setInterval loop which ticks approximate track progress
+ * DONE
+ */
+function startTrackProgressLoop(websiteState) {
+    calculateTrackProgress(websiteState);
+    // calculate and set track progress on a specified tick rate
+    websiteState.visualizer.trackProgressLoop = setInterval(() => {
+        calculateTrackProgress(websiteState);
+    }, websiteState.visualizer.trackProgressTickRate);
+}
+
+/**
+ * calculates current song progress with timestamp now and timestamp when song started playing
+ * DONE
+ */
+function calculateTrackProgress(websiteState) {
+    websiteState.visualizer.trackProgress =
+        websiteState.visualizer.initialTrackProgress +
+        (Date.now() - websiteState.visualizer.initialTimestamp);
+}
+
+/**
+ * stops the approximate track progress loop
+ * DONE
+ */
+function stopTrackProgressLoop(websiteState) {
+    if (websiteState.visualizer.trackProgressLoop !== undefined) {
+        clearTimeout(websiteState.visualizer.trackProgressLoop);
+    }
+}
+
+/**
+ * Method borrowed from https://github.com/zachwinter/kaleidosync
+ * Beat interval data is not present for entire duration of track data, and it is in seconds, not ms
+ * We must make sure the first beat starts at 0, and the last ends at the end of the track
+ * Then convert all time data to ms.
+ * DONE
+ */
+function normalizeIntervals(websiteState, { track, analysis }) {
+    if (websiteState.visualizer.hasAnalysis) {
+        const beats = analysis["beats"];
+        /** Ensure first interval of each type starts at zero. */
+        beats[0].duration = beats[0].start + beats[0].duration;
+        beats[0].start = 0;
+
+        /** Ensure last interval of each type ends at the very end of the track. */
+        beats[beats.length - 1].duration =
+            track.duration_ms / 1000 - beats[beats.length - 1].start;
+
+        /** Convert every time value to milliseconds for our later convenience. */
+        beats.forEach(interval => {
+            interval.start = interval.start * 1000;
+            interval.duration = interval.duration * 1000;
+        });
+    }
+}
+
+/**
+ * Manages the beat fire loop and detection of the active beat.
+ * DONE
+ */
+function syncBeats(state) {
+    if (websiteState.visualizer.hasAnalysis) {
+        // reset the active beat
+        websiteState.visualizer.activeBeat = {};
+        websiteState.visualizer.activeBeatIndex = 0;
+
+        // grab state vars
+        var trackProgress = websiteState.visualizer.trackProgress;
+        var beats = websiteState.visualizer.trackAnalysis["beats"];
+
+        // find and set the currently active beat
+        for (var i = 0; i < beats.length - 2; i++) {
+            if (
+                trackProgress > beats[i].start &&
+                trackProgress < beats[i + 1].start
+            ) {
+                websiteState.visualizer.activeBeat = beats[i];
+                websiteState.visualizer.activeBeatIndex = i;
+                break;
+            }
+        }
+        // stage the beat
+        stageBeat(websiteState);
+    }
+}
+
+/**
+ * calculates the time until the next beat based on current beat duration and track progress
+ * DONE
+ */
+function calculateTimeUntilNextBeat(websiteState) {
+    var activeBeatStart = websiteState.visualizer.activeBeat.start;
+    var activeBeatDuration = websiteState.visualizer.activeBeat.duration;
+    var trackProgress = websiteState.visualizer.trackProgress;
+    var timeUntilNextBeat =
+        activeBeatDuration - (trackProgress - activeBeatStart);
+    return timeUntilNextBeat;
+}
+
+/**
+ * stage a beat to fire after a delay
+ * DONE
+ */
+function stageBeat(websiteState) {
+    //set the timeout id to a variable in state for convenient loop cancellation.
+    websiteState.visualizer.beatLoop = setTimeout(
+        () => fireBeat(websiteState),
+        calculateTimeUntilNextBeat(websiteState)
+    );
+}
+
+/**
+ * stops the beat loop
+ * DONE
+ */
+function stopBeatLoop(websiteState) {
+    if (websiteState.visualizer.beatLoop !== undefined) {
+        clearTimeout(websiteState.visualizer.beatLoop);
+    }
+}
+
+/**
+ * Fires a beat on the LED strip.
+ * Will need to work on this
+ */
+function fireBeat(websiteState) {
+    // log the beat to console if you want to
+    /*
+    console.log(
+        `\nBEAT - ${Math.round(state.visualizer.activeBeat.start)}ms\n`
+    );
+    */
+
+    // grab a random color from the options that is different from the previous color
+    var randColor;
+    do {
+        randColor = Math.floor(
+            Math.random() * Math.floor(websiteState.visualizer.colors.length)
+        );
+    } while (randColor == websiteState.visualizer.lastColor);
+    //set the new previous color
+    websiteState.visualizer.lastColor = randColor;
+
+    /*
+
+    // set every LED on the strip to that color
+    for (var i = 0; i < NUM_LEDS; i++) {
+        pixelData[i] = websiteState.visualizer.colors[randColor];
+    }
+
+    //render the LED strip
+    ws281x.render(pixelData);
+    */
+    // continue the beat loop by incrementing to the next beat
+    incrementBeat(websiteState);
+    /*}*/
+}
+
+/**
+ * sets the new active beat to the next beat in the array (if it exists)
+ * DONE
+ */
+function incrementBeat(websiteState) {
+    var beats = websiteState.visualizer.trackAnalysis["beats"];
+    var lastBeatIndex = websiteState.visualizer.activeBeatIndex;
+    // if the last beat index is the last beat of the song, stop beat loop
+    if (beats.length - 1 !== lastBeatIndex) {
+        // stage the beat
+        stageBeat(websiteState);
+
+        // update the active beat to be the next beat
+        var nextBeat = beats[lastBeatIndex + 1];
+        websiteState.visualizer.activeBeat = nextBeat;
+        websiteState.visualizer.activeBeatIndex = lastBeatIndex + 1;
+    }
+}
+
+
+
+
+
+
 
 app.listen(appPort);
 console.log("Listening on " + appPort.toString());
