@@ -9,7 +9,10 @@ var querystring = require("query-string");
 var cookieParser = require("cookie-parser");
 var crypto = require("crypto");
 var socketio = require("socket.io-client");
+
+
 var websiteState = require("./websiteState").state;
+var jsdom = require("jsdom");
 
 //grab network config info from network-info.json
 var networkInfo = require("./network-info.json");
@@ -17,12 +20,24 @@ var baseUrl = networkInfo.baseUrl;
 var appPort = networkInfo.frontEndPort;
 var backEndPort = networkInfo.backEndPort;
 
+
+var JSDOM = jsdom.JSDOM;
+
+global.document = new JSDOM("http://localhost:5000").window.document;
+
+
 //initialize Express server using public dir and cors, cookie-parser middleware
 var app = express();
 app.use(express.static(__dirname + "/public"))
     .use(cors())
     .use(cookieParser());
 app.use(express.static(__dirname + '/styles'));
+
+
+var server = require('http').Server(app);
+var io = require('socket.io')(server);
+
+
 
 //spotify api information
 var client_id = "a80ce077cafc435b993b38d5a9bb9762";
@@ -36,13 +51,25 @@ var stateKey = "spotify_auth_state";
         WebSocket communication between front-end and back-end server.
     ====================================================== */
 //connect to the back-end server via websockets
+
+var socket = io.listen(server)
+
+
+socket.on('connection',function(socket){
+    socket.emit('announcements', {message: "Socket Connection Worked "});
+})
+
+
+
+/*
+
 var socket = socketio.connect(baseUrl + ":" + backEndPort.toString() + "/", {
     reconnection: true
 });
 socket.on("connect", () => {
     console.log("connected to back-end server");
 });
-
+*/
 /* ==========
         ROUTES
     ========== */
@@ -129,6 +156,7 @@ app.get("/callback", function(req, res) {
                     console.log("access_token: " + websiteState.tokens.access_token);
                     refreshAccessToken(websiteState);
                     res.redirect("/visualizer");
+                 
             }
             else {
                 res.redirect(
@@ -203,7 +231,8 @@ app.get("/callback", function(req, res) {
 });
 
 
-//This is for the website refresh token
+//This is for the website refresh token NOT USING IT
+/*
 app.get('/refresh_token', function(req, res) {
 
     // requesting access token from refresh token
@@ -236,16 +265,14 @@ app.get('/refresh_token', function(req, res) {
     }
     });
 });
+*/
 
 
 
 
 /*
-
-Start of function testing 
+*  Start of function testing 
 */
-
-
 function connect(websiteState) {
     stopPingLoop(websiteState);
     initialize(websiteState, websiteState.tokens.accessToken)
@@ -253,6 +280,7 @@ function connect(websiteState) {
 }
 /**
  *  initializes the visualizer by setting access token and starting ping loop
+ *  Done
  */
 function initialize(websiteState, access_token) {
     // update state with access token
@@ -262,14 +290,9 @@ function initialize(websiteState, access_token) {
     ping(websiteState);
 }
 
-
-
-
-
-
 /**
  * request new access token from express server if required
- Need to work on this
+ * Need to work on this
  */
 function refreshAccessToken(websiteState) {
     console.log("Refreshing access token...");
@@ -415,6 +438,7 @@ function fetchTrackData(websiteState, { track, progress }) {
 
 /**
  * figure out what to do, according to state and track data 
+ * might need to work on this when no song playing for front end actually done in stopVisualizer funciton so this IS
  * DONE
  */
 function processResponse(websiteState, { track, playing, progress }) {
@@ -706,6 +730,8 @@ function fireBeat(websiteState) {
     ws281x.render(pixelData);
     */
     // continue the beat loop by incrementing to the next beat
+    setBackgroundColor(randColor);
+
     incrementBeat(websiteState);
     /*}*/
 }
@@ -729,11 +755,12 @@ function incrementBeat(websiteState) {
     }
 }
 
+function setBackgroundColor(randColor){
+    hexString = websiteState.visualizer.colors[randColor].toString(16);
+    console.log("Hex of Number is #" + hexString)
+    socket.emit('changeColor', {message: hexString})
 
+}
 
-
-
-
-
-app.listen(appPort);
+server.listen(appPort);
 console.log("Listening on " + appPort.toString());
