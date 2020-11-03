@@ -1,0 +1,58 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Bootstrap Example</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">\
+    <link rel="stylesheet" type="text/css" href="/styleSheet1.css" />
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.16.0/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class='row justify-content-lg-center' id='row1'>
+            <div class="rounded-pill col-lg-auto" id="topPill">
+                <h1>My Spotify Project</h1>
+            </div>
+        </div>
+
+        <div class='row' id='row1'>
+            <div class="col-lg-auto" id="pills">
+                <a class="rounded-pill btn btn-primary">Currently Active</a>
+            </div>
+        </div>
+
+        <div class='row' id='row1'>
+            <div class="col-lg-auto" id="pills">
+                <a href="/login" class="rounded-pill btn btn-primary">Switch Accounts</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var socket = io.connect('http://127.0.0.1:5000');
+        socket.on("announcements", function(data) {
+        console.log('(Front) Got anouncementL: (Back)', data.message);
+        });
+
+        socket.on('changeColor',function (data){
+        var c = data.message
+        console.log("Changing Color to:"+ c)
+        document.body.style.backgroundColor = "#"+data.message;
+        document.body.style.backgroundImage = 'none';
+       
+        });
+
+        socket.on('stopVisualuizer',function(data){
+        console.log("No music playing. Setting default background color.")
+        document.body.style.backgroundColor = data.backgroundColor;
+        document.body.style.backgroundImage = data.backGroundImage;
+        });
+
+    </script>
+</body>
+</html>

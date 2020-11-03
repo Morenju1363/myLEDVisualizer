@@ -10,9 +10,7 @@ var cookieParser = require("cookie-parser");
 var crypto = require("crypto");
 var socketio = require("socket.io-client");
 
-
 var websiteState = require("./websiteState").state;
-var jsdom = require("jsdom");
 
 //grab network config info from network-info.json
 var networkInfo = require("./network-info.json");
@@ -21,19 +19,16 @@ var appPort = networkInfo.frontEndPort;
 var backEndPort = networkInfo.backEndPort;
 
 
-var JSDOM = jsdom.JSDOM;
-
-global.document = new JSDOM("http://localhost:5000").window.document;
-
 
 //initialize Express server using public dir and cors, cookie-parser middleware
 var app = express();
-app.use(express.static(__dirname + "/public"))
+app.use(express.static(__dirname + "/views"))
     .use(cors())
     .use(cookieParser());
 app.use(express.static(__dirname + '/styles'));
+app.set('view engine', 'ejs');
 
-
+//front end for visualizer website
 var server = require('http').Server(app);
 var io = require('socket.io')(server);
 
@@ -74,10 +69,14 @@ socket.on("connect", () => {
         ROUTES
     ========== */
 //main visualization page
+/*
 app.get("/visualizer", function(req, res) {
     res.redirect("visualizer.html");
 });
-
+*/
+app.get("/HomePage", function (req,res){
+    res.render('header');
+})
 //login page (redirects to spotify auth page) All GOOD
 app.get("/login", function(req, res) {
     //initialize random state ID and store in cookie
@@ -154,8 +153,8 @@ app.get("/callback", function(req, res) {
                     websiteState.tokens.access_token = body.access_token
                     websiteState.tokens.refresh_token = body.refresh_token;
                     console.log("access_token: " + websiteState.tokens.access_token);
-                    refreshAccessToken(websiteState);
-                    res.redirect("/visualizer");
+                    //refreshAccessToken(websiteState);
+                    res.redirect("/HomePage");
                  
             }
             else {
@@ -230,43 +229,10 @@ app.get("/callback", function(req, res) {
     }
 });
 
-
-//This is for the website refresh token NOT USING IT
-/*
-app.get('/refresh_token', function(req, res) {
-
-    // requesting access token from refresh token
-    //var refresh_token = req.query.refresh_token;
-    var authOptions = {
-      url: 'https://accounts.spotify.com/api/token',
-      headers: { 'Authorization': 'Basic ' + (new Buffer(client_id + ':' + client_secret).toString('base64')) },
-      form: {
-        grant_type: 'refresh_token',
-        refresh_token: websiteState.tokens.refresh_token
-      },
-      json: true
-    };
-  
-    request.post(authOptions, function(error, response, body) {
-      if (!error && response.statusCode === 200) {
-        websiteState.tokens.accessToken = body.access_token;
-        //I dont think i will need this part but lets keeop it for now. the Send part
-        res.send({
-          'access_token': websiteState.tokens.accessToken 
-        });
-      }
-      else {
-        res.redirect(
-            "/#" +
-                querystring.stringify({
-                    error: "Refresh Token Error"
-                })
-        );
-    }
-    });
-});
-*/
-
+app.get('/visualizer',  function(req,res){
+    refreshAccessToken(websiteState);
+    res.render("visualizer");
+})
 
 
 
@@ -534,7 +500,7 @@ function startVisualizer(websiteState) {
 
 /**
  * sets visualizer to inactive, terminates beat loop, and turns off led strip
- * THIS WILL NEED TO WORK ON
+ * Done. Background goes defualt to the purple black gradient when stopped.
  */
 function stopVisualizer(websiteState) {
     console.log("\nVisualizer stopped");
@@ -543,6 +509,7 @@ function stopVisualizer(websiteState) {
     stopTrackProgressLoop(websiteState);
     // stop the beat loop if it's running
     stopBeatLoop(websiteState);
+    socket.emit('stopVisualuizer',{backgroundColor: "rgb(25,20,20)", backGroundImage: "radial-gradient(purple,rgb(25,20,20)"});
     // black out the led strip DONT NEED THIS
     /*
     for (var i = 0; i < NUM_LEDS; i++) {
@@ -699,7 +666,7 @@ function stopBeatLoop(websiteState) {
 
 /**
  * Fires a beat on the LED strip.
- * Will need to work on this
+ * Done with website. Need to uncomment led code 
  */
 function fireBeat(websiteState) {
     // log the beat to console if you want to
@@ -754,13 +721,56 @@ function incrementBeat(websiteState) {
         websiteState.visualizer.activeBeatIndex = lastBeatIndex + 1;
     }
 }
-
+/*
+ * Setting website background color
+*/
 function setBackgroundColor(randColor){
     hexString = websiteState.visualizer.colors[randColor].toString(16);
-    console.log("Hex of Number is #" + hexString)
+    //console.log("Hex of Number is #" + hexString) //Testing purposes to see right color was being shown
     socket.emit('changeColor', {message: hexString})
 
 }
 
 server.listen(appPort);
 console.log("Listening on " + appPort.toString());
+
+
+
+
+//This is for the website refresh token NOT USING IT
+/*
+app.get('/refresh_token', function(req, res) {
+
+    // requesting access token from refresh token
+    //var refresh_token = req.query.refresh_token;
+    var authOptions = {
+      url: 'https://accounts.spotify.com/api/token',
+      headers: { 'Authorization': 'Basic ' + (new Buffer(client_id + ':' + client_secret).toString('base64')) },
+      form: {
+        grant_type: 'refresh_token',
+        refresh_token: websiteState.tokens.refresh_token
+      },
+      json: true
+    };
+  
+    request.post(authOptions, function(error, response, body) {
+      if (!error && response.statusCode === 200) {
+        websiteState.tokens.accessToken = body.access_token;
+        //I dont think i will need this part but lets keeop it for now. the Send part
+        res.send({
+          'access_token': websiteState.tokens.accessToken 
+        });
+      }
+      else {
+        res.redirect(
+            "/#" +
+                querystring.stringify({
+                    error: "Refresh Token Error"
+                })
+        );
+    }
+    });
+});
+*/
+
+

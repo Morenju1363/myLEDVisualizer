@@ -1,38 +1,40 @@
-html{
-    height: 100%;/*Without this the background messes up. Not sure why yet*/
+html {
+    height: 100%; /*Without this the background messes up. Not sure why yet*/
 }
-body{
+
+body {
     background-color: rgb(25,20,20); /*for broswers that dont support gradients*/
     background-image: radial-gradient(purple,rgb(25,20,20));
 }
 /*This will be for text and pills to be aligned throughout the page*/
-#row1{
+#row1 {
     text-align: center;
     display: initial;
 }
 /*First row in the page. This is the "My Spotify Project" pill*/
-#topPill{ 
-    /*spotify green*/     
+#topPill {
+    /*spotify green*/
     background-image: radial-gradient(rgb(30, 215, 96),rgb(9,145,46));
-    border-color: black; 
+    border-color: black;
     border-width: 3px;
     border-style: solid;
-    
 }
-#pills a{
+
+#pills a {
     width: 50%;
-    border-color: black; 
+    border-color: black;
     border-width: 3px;
     border-style: solid;
     margin-bottom: -2%;
 }
-
+/*Used in index.html only (these 2)*/
 #login, #loggedin {
     display: none;
-  }
-  .text-overflow {
+}
+
+.text-overflow {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     width: 500px;
-  }
+}
